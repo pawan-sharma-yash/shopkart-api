@@ -77,7 +77,7 @@ class ProductTestBase(unittest.TestCase):
             "description": "A phone",
             "price": 499.00,
             "old_price": 799.00,
-            "image_url": "http://img/1.png",
+            "image_urls": ["http://img/1.png", "http://img/2.png"],
             "is_active": True,
         }
         fields.update(kwargs)
@@ -112,12 +112,19 @@ class ProductListingTest(ProductTestBase):
         item = body["items"][0]
         self.assertEqual(
             set(item.keys()),
-            {"id", "name", "price", "old_price", "image", "average_rating", "is_favorite"},
+            {"id", "name", "price", "old_price", "images", "average_rating", "is_favorite"},
         )
         self.assertEqual(item["name"], "Phone")
         self.assertEqual(item["price"], 499.0)
         self.assertEqual(item["old_price"], 799.0)
-        self.assertEqual(item["image"], "http://img/1.png")
+        self.assertEqual(item["images"], ["http://img/1.png", "http://img/2.png"])
+
+    def test_product_without_images_returns_empty_list(self):
+        self.make_product(image_urls=[])
+
+        item = self.client.get("/products").json()["items"][0]
+
+        self.assertEqual(item["images"], [])
 
     def test_average_rating_defaults_to_zero(self):
         self.make_product()
@@ -235,7 +242,7 @@ class ProductCreationTest(ProductTestBase):
                 "description": "Nice",
                 "price": 499,
                 "old_price": 799,
-                "image_url": "http://img/1.png",
+                "images": ["http://img/1.png", "http://img/2.png", "http://img/3.png"],
             },
             headers=self.auth_headers(user_id),
         )
@@ -246,10 +253,24 @@ class ProductCreationTest(ProductTestBase):
         self.assertEqual(body["description"], "Nice")
         self.assertEqual(body["price"], 499.0)
         self.assertEqual(body["old_price"], 799.0)
-        self.assertEqual(body["image"], "http://img/1.png")
+        self.assertEqual(
+            body["images"],
+            ["http://img/1.png", "http://img/2.png", "http://img/3.png"],
+        )
         self.assertTrue(body["is_active"])
         self.assertEqual(body["average_rating"], 0.0)
         self.assertFalse(body["is_favorite"])
+
+    def test_rejects_too_many_images(self):
+        user_id = self.make_user()
+
+        response = self.client.post(
+            "/products",
+            json={"name": "Phone", "price": 499, "images": [f"http://img/{i}.png" for i in range(11)]},
+            headers=self.auth_headers(user_id),
+        )
+
+        self.assertEqual(response.status_code, 422)
 
     def test_creates_product_with_defaults(self):
         user_id = self.make_user()
@@ -263,7 +284,7 @@ class ProductCreationTest(ProductTestBase):
         self.assertEqual(response.status_code, 201)
         body = response.json()
         self.assertIsNone(body["old_price"])
-        self.assertIsNone(body["image"])
+        self.assertEqual(body["images"], [])
         self.assertTrue(body["is_active"])
 
     def test_created_product_appears_in_listing(self):
@@ -355,6 +376,32 @@ class ProductUpdateTest(ProductTestBase):
 
         self.assertEqual(response.status_code, 200)
         self.assertIsNone(response.json()["old_price"])
+
+    def test_replaces_images(self):
+        user_id = self.make_user()
+        product_id = self.make_product()
+
+        response = self.client.patch(
+            f"/products/{product_id}",
+            json={"images": ["http://img/new.png"]},
+            headers=self.auth_headers(user_id),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["images"], ["http://img/new.png"])
+
+    def test_empty_images_clears_all_images(self):
+        user_id = self.make_user()
+        product_id = self.make_product()
+
+        response = self.client.patch(
+            f"/products/{product_id}",
+            json={"images": []},
+            headers=self.auth_headers(user_id),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["images"], [])
 
     def test_deactivated_product_leaves_listing(self):
         user_id = self.make_user()

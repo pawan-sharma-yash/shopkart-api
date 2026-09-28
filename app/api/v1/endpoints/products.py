@@ -26,7 +26,7 @@ def list_products(
 ):
     """Public product listing.
 
-    Open for everyone (no auth required). Returns image, name, current
+    Open for everyone (no auth required). Returns images, name, current
     price (`price`), pre-discount price (`old_price`, null when there is
     no discount), average rating and per-user favorite flag.
     `is_favorite` is True only when the request carries a valid access
@@ -78,7 +78,7 @@ def list_products(
             name=product.name,
             price=float(product.price),
             old_price=float(product.old_price) if product.old_price is not None else None,
-            image=product.image_url,
+            images=list(product.image_urls or []),
             average_rating=round(avg_by_product.get(product.id, 0.0), 1),
             is_favorite=product.id in favorite_ids,
         )
@@ -105,7 +105,7 @@ def create_product(
         description=payload.description,
         price=payload.price,
         old_price=payload.old_price,
-        image_url=payload.image_url,
+        image_urls=list(payload.images),
         is_active=payload.is_active,
     )
     db.add(product)
@@ -118,7 +118,7 @@ def create_product(
         description=product.description,
         price=float(product.price),
         old_price=float(product.old_price) if product.old_price is not None else None,
-        image=product.image_url,
+        images=list(product.image_urls or []),
         is_active=product.is_active,
     )
 
@@ -134,7 +134,8 @@ def update_product(
 
     Requires authentication. Only the fields sent in the request are
     changed; omitted fields keep their current values. Send
-    `old_price: null` explicitly to remove a discount. Returns 404 when
+    `old_price: null` explicitly to remove a discount, and `images: []`
+    (or null) to remove all images. Returns 404 when
     the product does not exist.
     """
     product = db.get(Product, product_id)
@@ -157,8 +158,8 @@ def update_product(
         product.price = updates["price"]
     if "old_price" in updates:
         product.old_price = updates["old_price"]
-    if "image_url" in updates:
-        product.image_url = updates["image_url"]
+    if "images" in updates:
+        product.image_urls = list(updates["images"] or [])
     if "is_active" in updates:
         product.is_active = updates["is_active"]
 
@@ -171,7 +172,7 @@ def update_product(
         description=product.description,
         price=float(product.price),
         old_price=float(product.old_price) if product.old_price is not None else None,
-        image=product.image_url,
+        images=list(product.image_urls or []),
         is_active=product.is_active,
     )
 
@@ -217,7 +218,7 @@ def get_product(
         description=product.description,
         price=float(product.price),
         old_price=float(product.old_price) if product.old_price is not None else None,
-        image=product.image_url,
+        images=list(product.image_urls or []),
         is_active=product.is_active,
         average_rating=round(float(average_rating), 1),
         is_favorite=is_favorite,
