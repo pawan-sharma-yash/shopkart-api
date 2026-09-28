@@ -8,3 +8,7 @@ email-validator>=2.2.0
 fastapi-mail
 python-dotenv
 psycopg2-binary>=2.9.9
+
+# Testing
+pytest>=8.0.0
+httpx>=0.28.0

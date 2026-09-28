@@ -1,3 +1,7 @@
 # FastAPI entrypoint used by FastAPI CLI and compatible tooling.
 [tool.fastapi]
 entrypoint = "app.main:app"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
