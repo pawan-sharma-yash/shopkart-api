@@ -174,3 +174,51 @@ def update_product(
         image=product.image_url,
         is_active=product.is_active,
     )
+
+
+@router.get("/{product_id}", response_model=ProductRead)
+def get_product(
+    product_id: int,
+    db: Session = Depends(get_db),
+    current_user: User | None = Depends(get_optional_current_user),
+):
+    """Fetch a single product by its ID.
+
+    Open for everyone (no auth required), like the listing. Returns the
+    full detail including description, average rating and the per-user
+    favorite flag (`is_favorite` is True only with a valid access token
+    from a user who favorited it). Returns 404 when the ID does not exist.
+    """
+    product = db.get(Product, product_id)
+    if product is None:
+        raise HTTPException(status_code=404, detail="Product not found")
+
+    average_rating = db.scalar(
+        select(func.coalesce(func.avg(ProductRating.rating), 0.0)).where(
+            ProductRating.product_id == product.id
+        )
+    ) or 0.0
+
+    is_favorite = False
+    if current_user is not None:
+        is_favorite = (
+            db.scalar(
+                select(Favorite.id).where(
+                    Favorite.user_id == current_user.id,
+                    Favorite.product_id == product.id,
+                )
+            )
+            is not None
+        )
+
+    return ProductRead(
+        id=product.id,
+        name=product.name,
+        description=product.description,
+        price=float(product.price),
+        old_price=float(product.old_price) if product.old_price is not None else None,
+        image=product.image_url,
+        is_active=product.is_active,
+        average_rating=round(float(average_rating), 1),
+        is_favorite=is_favorite,
+    )
