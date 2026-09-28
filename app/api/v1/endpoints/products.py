@@ -1,12 +1,17 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from ....db.session import get_db
 from ....models.auth import User
 from ....models.product import Favorite, Product, ProductRating
-from ....schemas.product import ProductListItem, ProductListResponse
-from ...deps import get_optional_current_user
+from ....schemas.product import (
+    ProductCreate,
+    ProductListItem,
+    ProductListResponse,
+    ProductRead,
+)
+from ...deps import get_current_user, get_optional_current_user
 
 router = APIRouter(prefix="/products", tags=["products"])
 
@@ -80,3 +85,38 @@ def list_products(
     ]
 
     return ProductListResponse(total=total, skip=skip, limit=limit, items=items)
+
+
+@router.post("", response_model=ProductRead, status_code=status.HTTP_201_CREATED)
+def create_product(
+    payload: ProductCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Insert a new product.
+
+    Requires authentication (unlike the open listing). The new product
+    has no ratings yet and is not favorited, so `average_rating` is 0.0
+    and `is_favorite` is False in the response.
+    """
+    product = Product(
+        name=payload.name.strip(),
+        description=payload.description,
+        price=payload.price,
+        old_price=payload.old_price,
+        image_url=payload.image_url,
+        is_active=payload.is_active,
+    )
+    db.add(product)
+    db.commit()
+    db.refresh(product)
+
+    return ProductRead(
+        id=product.id,
+        name=product.name,
+        description=product.description,
+        price=float(product.price),
+        old_price=float(product.old_price) if product.old_price is not None else None,
+        image=product.image_url,
+        is_active=product.is_active,
+    )
