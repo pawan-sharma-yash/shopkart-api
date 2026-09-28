@@ -9,7 +9,7 @@ from .auth import (
     VerifyOTPRequest,
 )
 
-from .product import ProductCreate, ProductListItem, ProductListResponse, ProductRead
+from .product import ProductCreate, ProductListItem, ProductListResponse, ProductRead, ProductUpdate
 
 __all__ = [
     "CreateProfileRequest",
@@ -19,6 +19,7 @@ __all__ = [
     "ProductListItem",
     "ProductListResponse",
     "ProductRead",
+    "ProductUpdate",
     "RefreshTokenRequest",
     "SendOTPResponse",
     "TokenPair",

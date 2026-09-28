@@ -37,3 +37,12 @@ class ProductRead(BaseModel):
     is_active: bool = True
     average_rating: float = 0.0
     is_favorite: bool = False
+
+
+class ProductUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=2, max_length=200)
+    description: str | None = None
+    price: float | None = Field(default=None, ge=0)
+    old_price: float | None = Field(default=None, ge=0)
+    image_url: str | None = Field(default=None, max_length=500)
+    is_active: bool | None = None
