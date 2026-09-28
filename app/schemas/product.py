@@ -6,7 +6,7 @@ class ProductListItem(BaseModel):
     name: str
     price: float
     old_price: float | None = None
-    image: str | None = None
+    images: list[str] = Field(default_factory=list)
     average_rating: float = 0.0
     is_favorite: bool = False
 
@@ -23,7 +23,7 @@ class ProductCreate(BaseModel):
     description: str | None = None
     price: float = Field(ge=0)
     old_price: float | None = Field(default=None, ge=0)
-    image_url: str | None = Field(default=None, max_length=500)
+    images: list[str] = Field(default_factory=list, max_length=10)
     is_active: bool = True
 
 
@@ -33,7 +33,7 @@ class ProductRead(BaseModel):
     description: str | None = None
     price: float
     old_price: float | None = None
-    image: str | None = None
+    images: list[str] = Field(default_factory=list)
     is_active: bool = True
     average_rating: float = 0.0
     is_favorite: bool = False
@@ -44,5 +44,5 @@ class ProductUpdate(BaseModel):
     description: str | None = None
     price: float | None = Field(default=None, ge=0)
     old_price: float | None = Field(default=None, ge=0)
-    image_url: str | None = Field(default=None, max_length=500)
+    images: list[str] | None = Field(default=None, max_length=10)
     is_active: bool | None = None
