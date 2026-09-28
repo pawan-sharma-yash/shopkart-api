@@ -1,6 +1,8 @@
 import os
 
-os.environ["DATABASE_URL"] = "sqlite:///:memory:"
+IN_MEMORY_DB = "sqlite:///:memory:"
+
+os.environ["DATABASE_URL"] = IN_MEMORY_DB
 os.environ.setdefault("SECRET_KEY", "test-secret")
 
 import unittest
@@ -18,7 +20,7 @@ from app.models.auth import User
 from app.models.product import Favorite, Product, ProductRating
 
 engine = create_engine(
-    "sqlite:///:memory:",
+    IN_MEMORY_DB,
     connect_args={"check_same_thread": False},
     poolclass=StaticPool,
 )
