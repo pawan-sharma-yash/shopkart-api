@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -10,6 +10,7 @@ from ....schemas.product import (
     ProductListItem,
     ProductListResponse,
     ProductRead,
+    ProductUpdate,
 )
 from ...deps import get_current_user, get_optional_current_user
 
@@ -108,6 +109,59 @@ def create_product(
         is_active=payload.is_active,
     )
     db.add(product)
+    db.commit()
+    db.refresh(product)
+
+    return ProductRead(
+        id=product.id,
+        name=product.name,
+        description=product.description,
+        price=float(product.price),
+        old_price=float(product.old_price) if product.old_price is not None else None,
+        image=product.image_url,
+        is_active=product.is_active,
+    )
+
+
+@router.patch("/{product_id}", response_model=ProductRead)
+def update_product(
+    product_id: int,
+    payload: ProductUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Edit product details (partial update).
+
+    Requires authentication. Only the fields sent in the request are
+    changed; omitted fields keep their current values. Send
+    `old_price: null` explicitly to remove a discount. Returns 404 when
+    the product does not exist.
+    """
+    product = db.get(Product, product_id)
+    if product is None:
+        raise HTTPException(status_code=404, detail="Product not found")
+
+    updates = payload.model_dump(exclude_unset=True)
+    if not updates:
+        raise HTTPException(status_code=422, detail="No fields to update")
+
+    for field in ("name", "price", "is_active"):
+        if field in updates and updates[field] is None:
+            raise HTTPException(status_code=422, detail=f"{field} cannot be null")
+
+    if "name" in updates:
+        product.name = updates["name"].strip()
+    if "description" in updates:
+        product.description = updates["description"]
+    if "price" in updates:
+        product.price = updates["price"]
+    if "old_price" in updates:
+        product.old_price = updates["old_price"]
+    if "image_url" in updates:
+        product.image_url = updates["image_url"]
+    if "is_active" in updates:
+        product.is_active = updates["is_active"]
+
     db.commit()
     db.refresh(product)
 
