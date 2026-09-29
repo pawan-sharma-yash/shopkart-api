@@ -22,9 +22,13 @@ class Product(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(200), index=True, nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    category: Mapped[str | None] = mapped_column(String(100), index=True, nullable=True)
+    sub_category: Mapped[str | None] = mapped_column(String(100), index=True, nullable=True)
+    brand: Mapped[str | None] = mapped_column(String(100), index=True, nullable=True)
     price: Mapped[float] = mapped_column(Numeric(10, 2), nullable=False)
     old_price: Mapped[float | None] = mapped_column(Numeric(10, 2), nullable=True)
     image_urls: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    offers: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -42,6 +46,36 @@ class Product(Base):
     favorited_by: Mapped[list["Favorite"]] = relationship(
         back_populates="product", cascade="all, delete-orphan"
     )
+    variants: Mapped[list["ProductVariant"]] = relationship(
+        back_populates="product", cascade="all, delete-orphan"
+    )
+
+
+class ProductVariant(Base):
+    __tablename__ = "product_variants"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    product_id: Mapped[int] = mapped_column(
+        ForeignKey("products.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    sku: Mapped[str] = mapped_column(String(100), unique=True, index=True, nullable=False)
+    options: Mapped[list[dict[str, str]]] = mapped_column(JSON, nullable=False, default=list)
+    price: Mapped[float] = mapped_column(Numeric(10, 2), nullable=False)
+    old_price: Mapped[float | None] = mapped_column(Numeric(10, 2), nullable=True)
+    stock: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    images: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+    product: Mapped["Product"] = relationship(back_populates="variants")
 
 
 class ProductRating(Base):

@@ -17,7 +17,7 @@ from app.db.base import Base
 from app.db.session import get_db
 from app.main import app
 from app.models.auth import User
-from app.models.product import Favorite, Product, ProductRating
+from app.models.product import Favorite, Product, ProductRating, ProductVariant
 
 engine = create_engine(
     IN_MEMORY_DB,
@@ -51,6 +51,7 @@ class ProductTestBase(unittest.TestCase):
         try:
             db.query(Favorite).delete()
             db.query(ProductRating).delete()
+            db.query(ProductVariant).delete()
             db.query(Product).delete()
             db.query(User).delete()
             db.commit()
@@ -75,9 +76,13 @@ class ProductTestBase(unittest.TestCase):
         fields = {
             "name": "Phone",
             "description": "A phone",
+            "category": "Mobiles",
+            "sub_category": "Smartphones",
+            "brand": "Generic",
             "price": 499.00,
             "old_price": 799.00,
             "image_urls": ["http://img/1.png", "http://img/2.png"],
+            "offers": ["Bank Offer Flat Rs.500 off"],
             "is_active": True,
         }
         fields.update(kwargs)
@@ -88,6 +93,27 @@ class ProductTestBase(unittest.TestCase):
             db.commit()
             db.refresh(product)
             return product.id
+        finally:
+            db.close()
+
+    def make_variant(self, product_id, **kwargs):
+        fields = {
+            "sku": f"SKU-{product_id}-{ProductVariant.__tablename__}",
+            "options": [{"type": "color", "label": "Color", "value": "Black"}],
+            "price": 499.00,
+            "old_price": 799.00,
+            "stock": 10,
+            "images": ["http://img/v1.png"],
+            "is_active": True,
+        }
+        fields.update(kwargs)
+        db = TestingSession()
+        try:
+            variant = ProductVariant(product_id=product_id, **fields)
+            db.add(variant)
+            db.commit()
+            db.refresh(variant)
+            return variant.id
         finally:
             db.close()
 
@@ -112,12 +138,27 @@ class ProductListingTest(ProductTestBase):
         item = body["items"][0]
         self.assertEqual(
             set(item.keys()),
-            {"id", "name", "price", "old_price", "images", "average_rating", "is_favorite"},
+            {
+                "id",
+                "name",
+                "price",
+                "old_price",
+                "images",
+                "category",
+                "sub_category",
+                "brand",
+                "rating",
+                "reviews",
+                "is_favorite",
+            },
         )
         self.assertEqual(item["name"], "Phone")
         self.assertEqual(item["price"], 499.0)
         self.assertEqual(item["old_price"], 799.0)
         self.assertEqual(item["images"], ["http://img/1.png", "http://img/2.png"])
+        self.assertEqual(item["category"], "Mobiles")
+        self.assertEqual(item["sub_category"], "Smartphones")
+        self.assertEqual(item["brand"], "Generic")
 
     def test_product_without_images_returns_empty_list(self):
         self.make_product(image_urls=[])
@@ -126,14 +167,15 @@ class ProductListingTest(ProductTestBase):
 
         self.assertEqual(item["images"], [])
 
-    def test_average_rating_defaults_to_zero(self):
+    def test_rating_and_reviews_default_to_zero(self):
         self.make_product()
 
         item = self.client.get("/products").json()["items"][0]
 
-        self.assertEqual(item["average_rating"], 0.0)
+        self.assertEqual(item["rating"], 0.0)
+        self.assertEqual(item["reviews"], 0)
 
-    def test_average_rating_is_computed(self):
+    def test_rating_and_reviews_are_computed(self):
         user_id = self.make_user()
         product_id = self.make_product()
         db = TestingSession()
@@ -150,7 +192,8 @@ class ProductListingTest(ProductTestBase):
 
         item = self.client.get("/products").json()["items"][0]
 
-        self.assertEqual(item["average_rating"], 4.0)
+        self.assertEqual(item["rating"], 4.0)
+        self.assertEqual(item["reviews"], 2)
 
     def test_inactive_products_are_excluded(self):
         self.make_product(name="Active")
@@ -258,7 +301,8 @@ class ProductCreationTest(ProductTestBase):
             ["http://img/1.png", "http://img/2.png", "http://img/3.png"],
         )
         self.assertTrue(body["is_active"])
-        self.assertEqual(body["average_rating"], 0.0)
+        self.assertEqual(body["rating"], 0.0)
+        self.assertEqual(body["reviews"], 0)
         self.assertFalse(body["is_favorite"])
 
     def test_rejects_too_many_images(self):
@@ -286,6 +330,77 @@ class ProductCreationTest(ProductTestBase):
         self.assertIsNone(body["old_price"])
         self.assertEqual(body["images"], [])
         self.assertTrue(body["is_active"])
+
+    def test_creates_product_with_category_brand_offers_and_variants(self):
+        user_id = self.make_user()
+
+        response = self.client.post(
+            "/products",
+            json={
+                "name": "Galaxy S24",
+                "description": "Premium smartphone.",
+                "category": "Mobiles",
+                "sub_category": "Smartphones",
+                "brand": "Samsung",
+                "price": 74999,
+                "old_price": 81999,
+                "images": ["http://img/s24-1.png"],
+                "offers": ["Bank Offer Flat Rs.1500 off on select cards"],
+                "variants": [
+                    {
+                        "sku": "S24-BLACK-128",
+                        "options": [
+                            {"type": "color", "label": "Color", "value": "Onyx Black"},
+                            {"type": "storage", "label": "Storage", "value": "128 GB"},
+                        ],
+                        "price": 74999,
+                        "old_price": 81999,
+                        "stock": 12,
+                        "images": ["http://img/s24-black.png"],
+                    },
+                    {"sku": "S24-GRAY-256", "price": 79999, "stock": 5},
+                ],
+            },
+            headers=self.auth_headers(user_id),
+        )
+
+        self.assertEqual(response.status_code, 201)
+        body = response.json()
+        self.assertEqual(body["category"], "Mobiles")
+        self.assertEqual(body["sub_category"], "Smartphones")
+        self.assertEqual(body["brand"], "Samsung")
+        self.assertEqual(body["offers"], ["Bank Offer Flat Rs.1500 off on select cards"])
+        self.assertEqual(len(body["variants"]), 2)
+        first, second = body["variants"]
+        self.assertEqual(first["sku"], "S24-BLACK-128")
+        self.assertEqual(
+            first["options"],
+            [
+                {"type": "color", "label": "Color", "value": "Onyx Black"},
+                {"type": "storage", "label": "Storage", "value": "128 GB"},
+            ],
+        )
+        self.assertEqual(first["stock"], 12)
+        self.assertEqual(first["images"], ["http://img/s24-black.png"])
+        self.assertEqual(second["options"], [])
+        self.assertEqual(second["stock"], 5)
+
+    def test_rejects_duplicate_variant_sku(self):
+        user_id = self.make_user()
+        headers = self.auth_headers(user_id)
+        payload = {
+            "name": "Phone",
+            "price": 499,
+            "variants": [{"sku": "DUP-1", "price": 499}],
+        }
+
+        self.assertEqual(
+            self.client.post("/products", json=payload, headers=headers).status_code,
+            201,
+        )
+        response = self.client.post("/products", json=payload, headers=headers)
+
+        self.assertEqual(response.status_code, 409)
 
     def test_created_product_appears_in_listing(self):
         user_id = self.make_user()
@@ -403,6 +518,75 @@ class ProductUpdateTest(ProductTestBase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["images"], [])
 
+    def test_replaces_variants(self):
+        user_id = self.make_user()
+        headers = self.auth_headers(user_id)
+        product_id = self.make_product()
+        self.make_variant(product_id, sku="OLD-1")
+
+        response = self.client.patch(
+            f"/products/{product_id}",
+            json={
+                "variants": [
+                    {"sku": "NEW-1", "price": 399, "stock": 3},
+                    {"sku": "NEW-2", "price": 499, "stock": 7},
+                ]
+            },
+            headers=headers,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            [v["sku"] for v in response.json()["variants"]], ["NEW-1", "NEW-2"]
+        )
+
+    def test_rejects_null_variants(self):
+        user_id = self.make_user()
+        product_id = self.make_product()
+
+        response = self.client.patch(
+            f"/products/{product_id}",
+            json={"variants": None},
+            headers=self.auth_headers(user_id),
+        )
+
+        self.assertEqual(response.status_code, 422)
+
+    def test_rejects_duplicate_variant_sku_on_update(self):
+        user_id = self.make_user()
+        headers = self.auth_headers(user_id)
+        first_id = self.make_product(name="First")
+        second_id = self.make_product(name="Second")
+        self.make_variant(first_id, sku="TAKEN-1")
+
+        response = self.client.patch(
+            f"/products/{second_id}",
+            json={"variants": [{"sku": "TAKEN-1", "price": 100}]},
+            headers=headers,
+        )
+
+        self.assertEqual(response.status_code, 409)
+
+    def test_updates_category_brand_and_offers(self):
+        user_id = self.make_user()
+        product_id = self.make_product()
+
+        response = self.client.patch(
+            f"/products/{product_id}",
+            json={
+                "category": "Electronics",
+                "brand": "Acme",
+                "offers": ["No Cost EMI available"],
+            },
+            headers=self.auth_headers(user_id),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["category"], "Electronics")
+        self.assertEqual(body["brand"], "Acme")
+        self.assertEqual(body["offers"], ["No Cost EMI available"])
+
     def test_deactivated_product_leaves_listing(self):
         user_id = self.make_user()
         product_id = self.make_product()
@@ -416,6 +600,46 @@ class ProductUpdateTest(ProductTestBase):
         self.assertEqual(response.status_code, 200)
         self.assertFalse(response.json()["is_active"])
         self.assertEqual(self.client.get("/products").json()["total"], 0)
+
+
+class ProductDetailTest(ProductTestBase):
+    def test_returns_404_for_missing_product(self):
+        response = self.client.get("/products/999")
+
+        self.assertEqual(response.status_code, 404)
+
+    def test_returns_full_detail_with_offers_variants_rating_and_reviews(self):
+        user_id = self.make_user()
+        product_id = self.make_product()
+        self.make_variant(product_id, sku="DET-1", price=499.00, stock=4)
+        db = TestingSession()
+        try:
+            db.add_all(
+                [
+                    ProductRating(product_id=product_id, user_id=user_id, rating=5),
+                    ProductRating(product_id=product_id, user_id=user_id, rating=4),
+                ]
+            )
+            db.add(Favorite(user_id=user_id, product_id=product_id))
+            db.commit()
+        finally:
+            db.close()
+
+        response = self.client.get(
+            f"/products/{product_id}", headers=self.auth_headers(user_id)
+        )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["description"], "A phone")
+        self.assertEqual(body["category"], "Mobiles")
+        self.assertEqual(body["brand"], "Generic")
+        self.assertEqual(body["offers"], ["Bank Offer Flat Rs.500 off"])
+        self.assertEqual(body["rating"], 4.5)
+        self.assertEqual(body["reviews"], 2)
+        self.assertTrue(body["is_favorite"])
+        self.assertEqual(len(body["variants"]), 1)
+        self.assertEqual(body["variants"][0]["sku"], "DET-1")
 
 
 if __name__ == "__main__":
