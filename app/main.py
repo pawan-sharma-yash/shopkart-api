@@ -1,16 +1,22 @@
+from contextlib import asynccontextmanager
+
 from dotenv import load_dotenv
 
 load_dotenv()
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from sqlalchemy import Integer, inspect, select, text
+from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 
 from . import models
 from .api.v1.api import api_router
 from .db.base import Base
 from .db.session import (
     SessionLocal,
+    concurrency_thread_limit,
     engine,
     ensure_wishlist_product_foreign_key,
     ensure_wishlist_variant_column,
@@ -143,7 +149,46 @@ def migrate_legacy_user_addresses() -> None:
 
 migrate_legacy_user_addresses()
 
-app = FastAPI(title="ShopKart Authentication API", version="1.0.0")
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    """Let the supported number of requests reach the database concurrently.
+
+    FastAPI runs synchronous endpoints on AnyIO's threadpool, which defaults to
+    40 tokens. Requests past that limit wait in the queue instead of running, so
+    the ceiling is raised to the configured concurrency before serving traffic.
+    """
+    import anyio.to_thread
+
+    anyio.to_thread.current_default_thread_limiter().total_tokens = (
+        concurrency_thread_limit()
+    )
+    yield
+
+
+app = FastAPI(
+    title="ShopKart Authentication API",
+    version="1.0.0",
+    lifespan=lifespan,
+)
+
+
+def database_unavailable_handler(_request: Request, _exc: Exception) -> JSONResponse:
+    """Report database exhaustion as retryable rather than as a server fault.
+
+    Running out of connections under load is a capacity condition: the same
+    request can succeed moments later. Answering 503 with Retry-After lets
+    clients back off, whereas an unhandled 500 reads as a broken deployment.
+    """
+    return JSONResponse(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        content={"detail": "Database is busy. Please retry."},
+        headers={"Retry-After": "1"},
+    )
+
+
+app.add_exception_handler(SQLAlchemyTimeoutError, database_unavailable_handler)
+app.add_exception_handler(OperationalError, database_unavailable_handler)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[

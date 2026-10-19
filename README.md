@@ -203,6 +203,54 @@ uvicorn app.main:app --reload
 
 The default database URL is `sqlite:///./auth.db`. Set `DATABASE_URL` to use another supported database. The product catalog is loaded from `app/data/products.json` when the database has no products. Authentication and email settings are configured with environment variables; see `app/core/security.py` and `app/services/email.py` for the names and defaults.
 
+## Concurrency
+
+The API is tuned to serve 100 simultaneous requests. Three settings make that work,
+and all of them are set automatically.
+
+**SQLite uses `NullPool`.** SQLAlchemy 2.x gives file-backed SQLite a default
+`QueuePool` of 5 connections plus 10 overflow. That silently caps the API at 15
+concurrent database users: request 16 waits 30 seconds and then fails with
+`TimeoutError`, which reaches the client as an HTTP 500. SQLite connections are
+cheap and the database file is the shared resource, so a connection is opened per
+request and SQLite arbitrates access with its own locks.
+
+**SQLite runs in WAL mode.** The default rollback journal holds an exclusive
+lock on the whole database while writing, so one write blocks every reader.
+WAL mode (`PRAGMA journal_mode=WAL`) lets readers and the writer proceed at the
+same time, and `busy_timeout` makes genuinely conflicting writers wait for the
+lock instead of raising "database is locked". Both are applied to every new
+connection, which matters because `NullPool` opens a fresh one per request.
+
+**The sync-endpoint threadpool is raised to 100.** FastAPI runs `def` endpoints on
+AnyIO's threadpool, which defaults to 40 tokens; requests past that limit queue
+instead of running.
+
+`sqlite:///:memory:` is the one exception. An in-memory database exists only inside
+a single connection, so it uses `StaticPool` to keep its tables alive. Concurrent
+sessions then interleave transactions on that one connection, so in-memory URLs are
+suitable for tests but not for concurrent load.
+
+Tune these with environment variables:
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `DB_THREAD_LIMIT` | `100` | Concurrent sync endpoints that may touch the database |
+| `DB_POOL_SIZE` | `20` | PostgreSQL/MySQL pooled connections |
+| `DB_MAX_OVERFLOW` | `20` | Extra PostgreSQL/MySQL connections above the pool size |
+| `DB_POOL_TIMEOUT` | `30` | Seconds to wait for a connection before failing |
+| `DB_POOL_RECYCLE` | `1800` | Seconds before a pooled connection is recycled |
+| `DB_SQLITE_BUSY_TIMEOUT` | `30` | Seconds SQLite waits on a locked database |
+
+`DB_POOL_SIZE` and `DB_MAX_OVERFLOW` apply to PostgreSQL and MySQL only; SQLite
+ignores them. When running multiple workers, total connections are
+`workers x (DB_POOL_SIZE + DB_MAX_OVERFLOW)`, which must stay below the database's
+`max_connections`.
+
+Exhausting connections under load is a capacity condition rather than a fault, so
+pool timeouts and SQLite lock errors are returned as **503 Service Unavailable**
+with a `Retry-After` header rather than as 500. Clients can back off and retry.
+
 ## Load testing
 
 The Locust workload and instructions for simulating up to 10,000 concurrent clients are in [LOAD_TESTING.md](LOAD_TESTING.md).
