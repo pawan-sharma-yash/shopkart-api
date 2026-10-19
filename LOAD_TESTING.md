@@ -5,6 +5,27 @@ product details, and the home page. If `LOAD_TEST_TOKEN` is set, it also reads
 the cart and order history using that access token. All requests are reads, so
 the workload does not place orders or change catalog data.
 
+## What the API can serve
+
+The API is configured for 100 simultaneous requests: SQLite runs with WAL and no
+fixed connection pool, and the sync-endpoint threadpool is sized to match. See
+the concurrency section of [README.md](README.md) for the settings and the
+environment variables that override them.
+
+Two limits are worth knowing before you interpret results.
+
+`/products` loads the full catalog and filters it in Python, because price
+filters read the `variants` JSON column. With the seeded 1,000-product catalog
+that is roughly 100 ms of CPU work per request and is bounded by the Python GIL,
+not by SQLite. It serves 100 concurrent clients without errors but at a much
+lower request rate than `/products/{id}`. Raising that ceiling means pushing
+pagination and filtering into SQL.
+
+`wait_time = constant(0)` means every simulated user fires a new request the
+instant its previous one completes. The run is therefore closed-loop: user count
+sets concurrency, and throughput is whatever the server can deliver. Locust
+reports failed requests for anything that is not 2xx.
+
 ## Run a 10,000-user load
 
 Install Locust in a separate load-generator environment:
@@ -26,6 +47,11 @@ locust -f loadtest/locustfile.py \
   --run-time 10m \
   --csv loadtest-results/shopkart
 ```
+
+A 10,000-user run against a single-process SQLite deployment is expected to be
+limited by CPU rather than by the database. SQLite is not a substitute for
+PostgreSQL or MySQL at that scale, and a single Python process will saturate its
+CPU before the database does.
 
 Create the `loadtest-results` directory before the run. `--spawn-rate` ramps up
 simulated users; adjust it to control how quickly the service is loaded. The
