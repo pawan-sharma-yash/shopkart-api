@@ -202,3 +202,7 @@ uvicorn app.main:app --reload
 ```
 
 The default database URL is `sqlite:///./auth.db`. Set `DATABASE_URL` to use another supported database. The product catalog is loaded from `app/data/products.json` when the database has no products. Authentication and email settings are configured with environment variables; see `app/core/security.py` and `app/services/email.py` for the names and defaults.
+
+## Load testing
+
+The Locust workload and instructions for simulating up to 10,000 concurrent clients are in [LOAD_TESTING.md](LOAD_TESTING.md).
