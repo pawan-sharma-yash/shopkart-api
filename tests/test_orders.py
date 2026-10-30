@@ -1,5 +1,6 @@
 import os
 import unittest
+from unittest.mock import patch
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
@@ -13,14 +14,16 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.core.security import create_access_token
+from app.api.v1.endpoints.orders import _new_public_order_id
 from app.db.base import Base
-from app.db.session import ensure_order_address_reference, get_db
+from app.db.session import ensure_order_address_reference, ensure_order_public_id, get_db
 from app.main import app
 from app.models.address import Address
 from app.models.auth import User
 from app.models.cart import CartItem
 from app.models.order import Order, OrderItem
 from app.models.product import Product
+from app.services.order_ids import generate_public_order_id
 
 
 class OrderApiTest(unittest.TestCase):
@@ -79,6 +82,7 @@ class OrderApiTest(unittest.TestCase):
     def create_product(self) -> int:
         with self.SessionLocal() as db:
             product = Product(
+                id=999999,
                 name="Test Product",
                 category="Testing",
                 reviews=0,
@@ -129,6 +133,7 @@ class OrderApiTest(unittest.TestCase):
     def add_order(self, user_id: int, created_at: datetime, order_number: int = 1):
         with self.SessionLocal() as db:
             order = Order(
+                public_order_id=generate_public_order_id(),
                 user_id=user_id,
                 status="placed",
                 total_amount=Decimal("12.50"),
@@ -173,6 +178,8 @@ class OrderApiTest(unittest.TestCase):
         self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.text)
         data = response.json()
         self.assertEqual(data["status"], "placed")
+        self.assertEqual(len(data["public_order_id"]), 10)
+        self.assertRegex(data["public_order_id"], r"^[A-Z0-9]{10}$")
         self.assertEqual(data["total_amount"], "25.00")
         self.assertEqual(data["shipping_address"], "123 Market Street")
         self.assertEqual(data["shipping_pin"], "123456")
@@ -189,6 +196,8 @@ class OrderApiTest(unittest.TestCase):
             self.assertEqual(product.variants[0]["stock"], 3)
             order = db.get(Order, data["id"])
             self.assertEqual(order.user_id, self.user_id)
+            self.assertEqual(order.id, data["id"])
+            self.assertEqual(order.public_order_id, data["public_order_id"])
             self.assertEqual(order.shipping_address_id, address_id)
 
     def test_checkout_rejects_empty_cart_and_missing_delivery_address(self):
@@ -286,6 +295,7 @@ class OrderApiTest(unittest.TestCase):
         self.assertEqual(first_data["pageSize"], 1)
         self.assertEqual(first_data["totalPages"], 2)
         self.assertEqual(first_data["orders"][0]["items"][0]["product_name"], "Test Product 2")
+        self.assertRegex(first_data["orders"][0]["public_order_id"], r"^[A-Z0-9]{10}$")
         self.assertIsNone(first_data["orders"][0]["shipping_address_id"])
 
         second_page = self.client.get(
@@ -409,6 +419,49 @@ class OrderApiTest(unittest.TestCase):
                 self.assertEqual(migrated.shipping_pin, "123456")
         finally:
             legacy_engine.dispose()
+
+    def test_order_public_id_migration_backfills_and_is_idempotent(self):
+        legacy_engine = create_engine("sqlite://")
+        try:
+            with legacy_engine.begin() as connection:
+                connection.execute(text("""
+                    CREATE TABLE orders (
+                        id INTEGER PRIMARY KEY,
+                        user_id INTEGER NOT NULL,
+                        status VARCHAR(30) NOT NULL,
+                        total_amount NUMERIC(12, 2) NOT NULL
+                    )
+                """))
+                connection.execute(text(
+                    "INSERT INTO orders (id, user_id, status, total_amount) "
+                    "VALUES (17, 1, 'placed', 12.50)"
+                ))
+
+            ensure_order_public_id(legacy_engine)
+            ensure_order_public_id(legacy_engine)
+
+            with legacy_engine.connect() as connection:
+                row = connection.execute(text(
+                    "SELECT id, public_order_id FROM orders WHERE id = 17"
+                )).one()
+                self.assertEqual(row.id, 17)
+                self.assertRegex(row.public_order_id, r"^[A-Z0-9]{10}$")
+            self.assertTrue(any(
+                index["name"] == "uq_orders_public_order_id" and index["unique"]
+                for index in inspect(legacy_engine).get_indexes("orders")
+            ))
+        finally:
+            legacy_engine.dispose()
+
+    def test_public_order_id_generation_retries_existing_value(self):
+        self.add_order(self.user_id, datetime.now(timezone.utc))
+        with self.SessionLocal() as db:
+            existing = db.scalar(select(Order.public_order_id))
+            with patch(
+                "app.api.v1.endpoints.orders.generate_public_order_id",
+                side_effect=[existing, "A1B2C3D4E5"],
+            ):
+                self.assertEqual(_new_public_order_id(db), "A1B2C3D4E5")
 
 
 if __name__ == "__main__":

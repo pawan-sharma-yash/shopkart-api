@@ -23,6 +23,7 @@ from ....schemas.order import (
     OrderRead,
 )
 from ....services.product_catalog import product_variants
+from ....services.order_ids import generate_public_order_id
 
 router = APIRouter(prefix="/orders", tags=["orders"])
 MAX_ORDER_TOTAL = Decimal("9999999999.99")
@@ -38,6 +39,7 @@ def _subtract_months(value: datetime, months: int) -> datetime:
 def _order_payload(order: Order) -> dict[str, Any]:
     return {
         "id": order.id,
+        "public_order_id": order.public_order_id,
         "status": order.status,
         "total_amount": order.total_amount,
         "shipping_address_id": order.shipping_address_id,
@@ -58,6 +60,18 @@ def _order_payload(order: Order) -> dict[str, Any]:
             for item in order.items
         ],
     }
+
+
+def _new_public_order_id(db: Session) -> str:
+    """Generate an ID not currently present, leaving the unique index as final guard."""
+    for _ in range(5):
+        candidate = generate_public_order_id()
+        if db.scalar(select(Order.id).where(Order.public_order_id == candidate)) is None:
+            return candidate
+    raise HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail="Could not allocate a unique order identifier; please retry",
+    )
 
 
 def _get_variant(product: Product, variant_id: str) -> tuple[dict, Decimal, int]:
@@ -175,6 +189,7 @@ def _create_order(
     products_by_id = {product.id: product for product in products}
 
     order = Order(
+        public_order_id=_new_public_order_id(db),
         user_id=current_user.id,
         status="placed",
         total_amount=Decimal("0.00"),

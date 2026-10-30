@@ -33,6 +33,7 @@ class OrderItemRead(BaseModel):
 
 class OrderRead(BaseModel):
     id: int
+    public_order_id: str
     status: str
     total_amount: Decimal
     shipping_address_id: int | None

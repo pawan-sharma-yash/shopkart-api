@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Integer, Numeric, String
+from sqlalchemy import JSON, DateTime, ForeignKey, Index, Integer, Numeric, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from ..db.base import Base
@@ -9,8 +9,12 @@ from ..db.base import Base
 
 class Order(Base):
     __tablename__ = "orders"
+    __table_args__ = (
+        Index("uq_orders_public_order_id", "public_order_id", unique=True),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    public_order_id: Mapped[str] = mapped_column(String(10), nullable=False)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     status: Mapped[str] = mapped_column(String(30), nullable=False, default="placed")
     total_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)

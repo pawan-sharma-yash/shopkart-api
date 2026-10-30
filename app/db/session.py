@@ -1,7 +1,9 @@
 import os
-
 from sqlalchemy import create_engine, inspect, text
+from sqlalchemy.engine import Engine
 from sqlalchemy.orm import sessionmaker
+
+from ..services.order_ids import generate_public_order_id
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./auth.db")
 
@@ -32,6 +34,37 @@ SessionLocal = sessionmaker(
     autocommit=False,
     autoflush=False,
 )
+
+
+def ensure_order_public_id(target_engine: Engine = engine) -> None:
+    """Add and backfill customer-facing order IDs on existing order tables."""
+    if "orders" not in inspect(target_engine).get_table_names():
+        return
+
+    columns = {column["name"] for column in inspect(target_engine).get_columns("orders")}
+    if "public_order_id" not in columns:
+        with target_engine.begin() as connection:
+            connection.execute(text(
+                "ALTER TABLE orders ADD COLUMN public_order_id VARCHAR(10) NULL"
+            ))
+
+    with target_engine.begin() as connection:
+        order_ids = connection.execute(text(
+            "SELECT id FROM orders WHERE public_order_id IS NULL"
+        )).scalars().all()
+        for order_id in order_ids:
+            connection.execute(
+                text("UPDATE orders SET public_order_id = :public_id WHERE id = :id"),
+                {"public_id": generate_public_order_id(), "id": order_id},
+            )
+
+    indexes = {index["name"] for index in inspect(target_engine).get_indexes("orders")}
+    if "uq_orders_public_order_id" not in indexes:
+        with target_engine.begin() as connection:
+            connection.execute(text(
+                "CREATE UNIQUE INDEX uq_orders_public_order_id "
+                "ON orders (public_order_id)"
+            ))
 
 
 def ensure_wishlist_product_foreign_key() -> None:
